@@ -195,11 +195,22 @@ Full command reference and the exact env files we used: see `MY-COMMANDS.md` sec
 | round-robin | ✅ 10/10 identities received requests |
 | full VPS reboot → all 4 services auto-start → external chat | ✅ `POST_REBOOT_EXTERNAL_OK` |
 | adapter/bridge exposure | ✅ 127.0.0.1 only; 9Router is the only public surface (key-auth) |
+| all 6 models via 9Router (external) | ✅ 6/6 HTTP 200 (gpt-oss-20b may reply empty — upstream quirk) |
+| 5 concurrent external chats | ✅ 5/5 correct ordered replies |
+| per-identity quota counters on ptero.pro | ✅ 10/10 identities show `used>0`, 1M cap, 3600s window |
+| watchdog functional test (corrupt clearance → auto-recover) | ✅ detected + re-solved in ~2 min (v2) |
 
 ## 6. Operational notes / gotchas
 
-- **Clearance lifetime:** observed ~30–60+ min. Worst case, requests 502 for a few minutes while
-  the watchdog re-solves (CF rate-limits re-solves; ~2–5 min spacing needed).
+- **Clearance lifetime:** observed to vary widely — from under 10 minutes to 1h+. The watchdog
+  (v2) checks every 3 min and re-solves when dead (min 4 min between attempts, CF rate-limit).
+  Worst case, requests 502 for a few minutes during a re-solve.
+- **Watchdog v1 bug (fixed here):** the original 10-min-check / 15-min-cooldown watchdog refused
+  to refresh a clearance that died 5–10 min after solving, leaving the stack down until the
+  cooldown expired. v2 tightens both intervals; functional corrupt→recover test passed in ~2 min.
+- **9Router non-stream quirk:** 9Router appends a stray `data: [DONE]` after the JSON body in
+  non-stream responses. Strict JSON parsers choke; use `JSONDecoder().raw_decode` (see
+  `tools/deep_validate.py` for the pattern).
 - **Sticky session is sacred:** if your proxy's egress IP rotates, the clearance dies. Use one
   session id forever (`...-session-<id>-lifetime-24h` grammar for hellworld).
 - **Keep the warm profile:** `/home/stealth/ptero-profile` accumulates trust; don't wipe it.
