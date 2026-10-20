@@ -199,6 +199,8 @@ Full command reference and the exact env files we used: see `MY-COMMANDS.md` sec
 | 5 concurrent external chats | ✅ 5/5 correct ordered replies |
 | per-identity quota counters on ptero.pro | ✅ 10/10 identities show `used>0`, 1M cap, 3600s window |
 | watchdog functional test (corrupt clearance → auto-recover) | ✅ detected + re-solved in ~2 min (v2) |
+| 20-min soak: 2 natural clearance deaths → both auto-recovered | ✅ watchdog refreshed at 05:23 + 05:30, healthy at every 3-min check after each |
+| post-soak: pool 10/10 healthy + external E2E + 5/5 concurrency | ✅ `SOAK_PASSED` |
 
 ## 6. Operational notes / gotchas
 
