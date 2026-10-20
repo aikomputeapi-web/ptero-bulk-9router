@@ -1,0 +1,20 @@
+[Unit]
+Description=9Router AI router (decolua/9router)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/9router/.env
+ExecStart=/usr/bin/node --dns-result-order=ipv4first --max-old-space-size=1024 /usr/lib/node_modules/9router/app/server.js
+WorkingDirectory=/usr/lib/node_modules/9router/app
+Environment=HOSTNAME=0.0.0.0
+Environment=PORT=20128
+Restart=always
+RestartSec=5
+User=root
+StandardOutput=append:/var/log/9router.log
+StandardError=append:/var/log/9router.err.log
+
+[Install]
+WantedBy=multi-user.target

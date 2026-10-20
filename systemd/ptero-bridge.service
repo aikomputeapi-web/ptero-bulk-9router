@@ -1,0 +1,15 @@
+[Unit]
+Description=ptero-fetch bridge (curl_cffi + residential proxy for ptero.pro)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/ptero-bulk-9router/bridge/ptero_bridge.py
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/ptero-bridge.log
+StandardError=append:/var/log/ptero-bridge.err.log
+
+[Install]
+WantedBy=multi-user.target

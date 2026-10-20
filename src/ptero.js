@@ -1,7 +1,8 @@
 "use strict";
 
 /**
- * ptero.js — client for the ptero.pro chat API.
+ * ptero.js — client for the ptero.pro chat API. (MODIFIED for CF-blocked VPS:
+ * HTTP goes through the local ptero-fetch bridge; see fetchViaBridge.js.)
  *
  * ptero.pro grants access to a purely anonymous "guest" identity. The identity
  * token is a random 32-character hex string generated client-side; there is no
@@ -17,6 +18,7 @@
  */
 
 const crypto = require("crypto");
+const { fetchViaBridge } = require("./fetchViaBridge.js");
 
 const BASE = "https://ptero.pro/wp-json/mlp/v1";
 const DEFAULT_NONCE = "d6b0728eb4";
@@ -69,7 +71,7 @@ class Ptero {
   }
 
   async _json(path, opts) {
-    const res = await fetch(this.base + path, opts);
+    const res = await fetchViaBridge(this.base + path, opts);
     const fresh = res.headers.get("x-wp-nonce");
     if (fresh) this.nonce = fresh; // the nonce rotates on every response
     if (!res.ok) {
@@ -114,7 +116,7 @@ class Ptero {
       lang: lang || "en",
       mode: mode || "chat",
     };
-    const res = await fetch(this.base + "/chat-stream", {
+    const res = await fetchViaBridge(this.base + "/chat-stream", {
       method: "POST",
       headers: this.headers(),
       body: JSON.stringify(body),
@@ -130,11 +132,18 @@ class Ptero {
       } catch (_) {}
       throw new Error(msg);
     }
-    const reader = res.body.getReader();
+    const reader = res.body.getReader ? res.body.getReader() : res.body[Symbol.asyncIterator]();
     const dec = new TextDecoder();
     let buf = "";
     while (true) {
-      const { done, value } = await reader.read();
+      let done, value;
+      if (res.body.getReader) {
+        const r = await reader.read();
+        done = r.done; value = r.value;
+      } else {
+        const r = await reader.next();
+        done = r.done; value = r.value;
+      }
       if (done) break;
       buf += dec.decode(value, { stream: true });
       const lines = buf.split("\n");

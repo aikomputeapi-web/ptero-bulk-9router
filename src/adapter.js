@@ -1,89 +1,71 @@
 "use strict";
 
 /**
- * adapter.js — OpenAI-compatible HTTP server bridging to ptero.pro.
+ * adapter.js — OpenAI-compatible HTTP server (modified 2026-10-20 for the
+ * CF-blocked-VPS setup; upstream calls now go through the ptero-fetch bridge
+ * via ptero.js/fetchViaBridge.js).
+ *
+ * Also fixes a crash in the original: withFailover retry after a stream had
+ * already started (ERR_HTTP_HEADERS_SENT). Stream attempts are no longer
+ * retried once headers are sent.
  *
  * Endpoints:
- *   GET  /v1/models                 list ptero models
- *   POST /v1/chat/completions       chat (stream + non-stream)
- *   GET  /health                    liveness
- *   GET  /pool                      pool health snapshot
- *   POST /pool/reload               reload accounts from the accounts file
- *
- * Zero dependencies. Requires Node 18+.
+ *   GET  /v1/models        list ptero models
+ *   POST /v1/chat/completions   OpenAI shape, stream + non-stream
+ *   GET  /health           { ok, pool }
+ *   GET  /pool             per-member health snapshot
+ *   POST /pool/reload      reload accounts file
  */
 
 const http = require("http");
-const crypto = require("crypto");
 const fs = require("fs");
-const { MODELS, DEFAULT_MODEL } = require("./ptero.js");
+const crypto = require("crypto");
 const { Pool } = require("./pool.js");
+const { MODELS, DEFAULT_MODEL } = require("./ptero.js");
 
-const PORT = parseInt(process.env.ADAPTER_PORT || process.env.PORT || "8791", 10);
-const HOST = process.env.ADAPTER_HOST || "127.0.0.1";
+const PORT = Number(process.env.ADAPTER_PORT || 8791);
+const HOST = process.env.ADAPTER_HOST || "0.0.0.0";
 const ACCOUNTS_FILE = process.env.ACCOUNTS_FILE || "";
-const POOL_SIZE = parseInt(process.env.POOL_SIZE || "3", 10);
+const POOL_SIZE = Number(process.env.POOL_SIZE || 0);
 
-function buildPool() {
-  if (ACCOUNTS_FILE && fs.existsSync(ACCOUNTS_FILE)) {
-    try {
-      const p = Pool.fromFile(ACCOUNTS_FILE);
-      console.log(`[adapter] pool loaded ${p.size} account(s) from ${ACCOUNTS_FILE}`);
-      return p;
-    } catch (e) {
-      console.log(`[adapter] failed to load ${ACCOUNTS_FILE}: ${e.message}; using generated pool`);
-    }
-  }
-  const { provisionManySync } = require("./provision-sync.js");
-  const accounts = [];
-  for (let i = 0; i < POOL_SIZE; i++) accounts.push(provisionManySync());
-  console.log(`[adapter] pool generated ${accounts.length} anonymous account(s) (no ACCOUNTS_FILE set)`);
-  return new Pool(accounts);
-}
+let pool = ACCOUNTS_FILE ? Pool.fromFile(ACCOUNTS_FILE) : new (require("./pool.js").Pool)([]);
 
-let pool = buildPool();
-
-// Map common OpenAI-ish names to ptero ids, and pass through raw ids.
-const ALIAS = {
-  "ling-3.0-flash": "ling-3.0-flash:free",
-  ling: "ling-3.0-flash:free",
-  "deepseek-v4.1-flash": "deepseek-v4.1-flash:free",
-  deepseek: "deepseek-v4.1-flash:free",
-  "mistral-nemo": "mistral-nemo:minirouter",
-  mistral: "mistral-nemo:minirouter",
-  "glm-5.3-flash": "glm-5.3-flash",
-  glm: "glm-5.3-flash",
-  "gpt-oss-20b": "gpt-oss-20b",
-  "gpt-oss": "gpt-oss-20b",
-  "apodex-1.1-mini": "apodex-1.1-mini:free",
-  apodex: "apodex-1.1-mini:free",
+const resolveModel = (m) => {
+  if (!m) return DEFAULT_MODEL;
+  const q = String(m).replace(/^ptero\//, "").toLowerCase();
+  const byId = MODELS.find((x) => x.id.toLowerCase() === q);
+  if (byId) return byId.id;
+  const byAlias = MODELS.find((x) => x.id.split(":")[0].toLowerCase() === q);
+  return byAlias ? byAlias.id : DEFAULT_MODEL;
 };
 
-function resolveModel(m) {
-  if (!m) return DEFAULT_MODEL;
-  if (MODELS.some((x) => x.id === m)) return m;
-  const base = m.replace(/^ptero\//, "").replace(/:free$/, "");
-  return ALIAS[m] || ALIAS[base] || DEFAULT_MODEL;
-}
-
-function readBody(req) {
-  return new Promise((resolve, reject) => {
+const readBody = (req) =>
+  new Promise((resolve) => {
     let b = "";
     req.on("data", (c) => (b += c));
     req.on("end", () => resolve(b));
-    req.on("error", reject);
+    req.on("error", () => resolve(""));
   });
-}
 
-function messagesToPrompt(messages, history) {
-  const arr = Array.isArray(messages) ? messages : [];
-  if (arr.length <= 1) return { message: (arr[0] && arr[0].content) || "", history: history || [] };
-  const last = arr[arr.length - 1];
-  const hist = arr.slice(0, -1).map((m) => ({
-    role: m.role,
-    text: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
-  }));
-  return { message: last.content || "", history: hist };
+function messagesToPrompt(messages) {
+  const msgs = Array.isArray(messages) ? messages : [];
+  const hist = [];
+  for (let i = 0; i < msgs.length - 1; i++) {
+    const m = msgs[i] || {};
+    const c = typeof m.content === "string"
+      ? m.content
+      : Array.isArray(m.content)
+        ? m.content.map((p) => (p && p.text) || "").join(" ")
+        : "";
+    if (c) hist.push({ role: m.role === "assistant" ? "assistant" : "user", text: c });
+  }
+  const last = msgs[msgs.length - 1] || {};
+  const lastText = typeof last.content === "string"
+    ? last.content
+    : Array.isArray(last.content)
+      ? last.content.map((p) => (p && p.text) || "").join(" ")
+      : "";
+  return { message: lastText, history: hist };
 }
 
 const cid = () => "chatcmpl-" + crypto.randomUUID().replace(/-/g, "").slice(0, 24);
@@ -91,6 +73,10 @@ const cid = () => "chatcmpl-" + crypto.randomUUID().replace(/-/g, "").slice(0, 2
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   const send = (code, obj, extra) => {
+    if (res.headersSent) {
+      try { res.end(); } catch (_) {}
+      return;
+    }
     res.writeHead(code, Object.assign({ "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }, extra));
     res.end(JSON.stringify(obj));
   };
@@ -98,13 +84,15 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Headers": "*",
-      "Access-Control-Allow-Methods": "*",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
     });
     return res.end();
   }
 
-  if (url.pathname === "/health") return send(200, { ok: true, pool: pool.size });
+  if (url.pathname === "/health") {
+    return send(200, { ok: pool.size > 0, pool: { size: pool.size } });
+  }
   if (url.pathname === "/pool") return send(200, { size: pool.size, members: pool.snapshot() });
 
   if (url.pathname === "/pool/reload") {
@@ -128,7 +116,7 @@ const server = http.createServer(async (req, res) => {
       return send(400, { error: { message: "invalid JSON body", type: "invalid_request_error" } });
     }
     const model = resolveModel(payload.model);
-    const { message, history } = messagesToPrompt(payload.messages, payload.history);
+    const { message, history } = messagesToPrompt(payload.messages);
     const stream = !!payload.stream;
     const convId = payload.conversation_id || crypto.randomUUID();
     const completionId = cid();
@@ -172,9 +160,12 @@ const server = http.createServer(async (req, res) => {
           await pool.withFailover(runStream);
         } catch (e) {
           if (!res.headersSent) return send(502, { error: { message: e.message, type: "upstream_error" } });
-          res.write("data: " + JSON.stringify({ error: { message: e.message } }) + "\n\n");
-          res.write("data: [DONE]\n\n");
-          return res.end();
+          try {
+            res.write("data: " + JSON.stringify({ error: { message: e.message } }) + "\n\n");
+            res.write("data: [DONE]\n\n");
+            res.end();
+          } catch (_) {}
+          return;
         }
         return;
       }

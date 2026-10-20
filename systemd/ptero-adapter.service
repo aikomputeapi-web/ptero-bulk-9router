@@ -1,0 +1,19 @@
+[Unit]
+Description=Ptero pool OpenAI-compatible adapter (:8791)
+After=network-online.target ptero-bridge.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=ADAPTER_PORT=8791
+Environment=ADAPTER_HOST=127.0.0.1
+Environment=ACCOUNTS_FILE=/opt/ptero-bulk-9router/accounts.json
+Environment=PTERO_BRIDGE_URL=http://127.0.0.1:8765/fetch
+ExecStart=/usr/bin/node /opt/ptero-bulk-9router/src/adapter.js
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/ptero-adapter.log
+StandardError=append:/var/log/ptero-adapter.err.log
+
+[Install]
+WantedBy=multi-user.target

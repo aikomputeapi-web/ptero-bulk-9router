@@ -1,0 +1,15 @@
+[Unit]
+Description=CF clearance watchdog (auto re-solve ptero.pro challenge)
+After=network-online.target ptero-bridge.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/ptero-bulk-9router/bridge/clearance_watchdog.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/ptero-watchdog.log
+StandardError=append:/var/log/ptero-watchdog.err.log
+
+[Install]
+WantedBy=multi-user.target
