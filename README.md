@@ -131,7 +131,7 @@ ptero-fetch bridge :8765  (systemd; Python + curl_cffi)
   • on 403-challenge: transparently triggers a clearance refresh and retries
       │
       ▼
-clearance watchdog (systemd; every 10 min)
+clearance watchdog (systemd; every 3 min, min 4 min between re-solves)
   • bridge /health does a real status call with the full winning header set
   • if dead → re-launches headful Chrome under xvfb (warm profile), re-solves, saves cookies
 ```
@@ -201,6 +201,7 @@ Full command reference and the exact env files we used: see `MY-COMMANDS.md` sec
 | watchdog functional test (corrupt clearance → auto-recover) | ✅ detected + re-solved in ~2 min (v2) |
 | 20-min soak: 2 natural clearance deaths → both auto-recovered | ✅ watchdog refreshed at 05:23 + 05:30, healthy at every 3-min check after each |
 | post-soak: pool 10/10 healthy + external E2E + 5/5 concurrency | ✅ `SOAK_PASSED` |
+| cross-client E2E (curl.exe + PowerShell, independent of test scripts) | ✅ `CURL_CLIENT_OK` + `PS_CLIENT_OK` |
 
 ## 6. Operational notes / gotchas
 
